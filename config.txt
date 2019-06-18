@@ -1,0 +1,152 @@
+===================================================================================================
+#                                   EDB FAILOVER MANAGER-3.5                                      #
+===================================================================================================
+
+
+###CREATE USER & DB FOR HEALTHCHECK###
+psql > create user efm_check_user password = 'p@ssw0rd';
+psql > create database efm_check_db owner efm_check_user;
+psql > grant EXECUTE ON FUNCTION pg_current_wal_lsn TO efm_check_user;
+psql > grant EXECUTE ON FUNCTION pg_wal_replay_pause TO efm_check_user;
+psql > grant EXECUTE ON FUNCTION pg_is_wal_replay_paused TO efm_check_user;
+psql > grant EXECUTE ON FUNCTION pg_wal_replay_resume TO efm_check_user;
+
+###INSTALL PACKAGE###
+note : run in Master, Slave & Witness node
+rpm -ivh bc-1.06.95-13.el7.x86_64.rpm (yum install -y bc)
+rpm -ivh net-tools-2.0-0.24.20131004git.el7.x86_64.rpm (yum install -y net-tools)
+rpm -ivh edb-efm35-3.5-1.rhel7.x86_64.rpm
+
+###CREATE ENCRYPT PASSWORD###
+/usr/edb/efm-3/bin/efm encrypt <cluster name>
+password : *****
+
+###EFM.PROPERTIES###
+note : edit in Master, Slave & Witness node
+vim /etc/edb/efm-3/efm/properties
+db.user=efm_check_user
+db.password.encrypted=ff7f041651e5e864013c1102d26a5e08
+db.port=5444
+db.database=efm_check_db
+db.service.owner=enterprisedb
+db.service.name=edb-as-10
+db.bin=
+db.recovery.conf.dir=/home/enterprisedb/data
+jdbc.sslmode=disable
+user.email=pieter.satumalay@i-3.co.id
+from.email=efm@edb.com
+notification.level=INFO
+script.notification=
+bind.address=<localhost ip>:7800
+admin.port=7809
+is.witness=false
+local.period=5
+local.timeout=10
+local.timeout.final=5
+remote.timeout=10
+node.timeout=50
+stop.isolated.master=true
+stop.failed.master=true
+master.shutdown.as.failure=false
+pingServerIp=8.8.8.8
+pingServerCommand=/bin/ping -q -c3 -w5
+auto.allow.hosts=false
+stable.nodes.file=false
+db.reuse.connection.count=0
+auto.failover=true
+auto.reconfigure=true
+promotable=true
+application.name=
+minimum.standbys=0
+recovery.check.period=2
+restart.connection.timeout=10
+auto.resume.period=10
+virtualIp=<virtual ip>
+virtualIp.interface=eth0
+virtualIp.prefix=24
+virtualIp.single=true
+check.vip.before.promotion=true
+script.load.balancer.attach=
+script.load.balancer.detach=
+script.fence=
+script.post.promotion=
+script.resumed=
+script.db.failure=
+script.master.isolated=
+script.remote.pre.promotion=
+script.remote.post.promotion=
+script.custom.monitor=
+custom.monitor.interval=
+custom.monitor.timeout=
+custom.monitor.safe.mode=
+sudo.command=sudo
+sudo.user.command=sudo -u %u
+lock.dir=
+log.dir=/var/log/efm-3.5/
+syslog.host=localhost
+syslog.port=514
+syslog.protocol=UDP
+syslog.facility=LOCAL1
+file.log.enabled=true
+syslog.enabled=true
+jgroups.loglevel=INFO
+efm.loglevel=INFO
+jvm.options=-Xmx128m
+
+###EFM.NODES###
+*Witness
+<ip master>:7800 <ip slave>:7800
+*Master
+<ip slave>:7800
+
+###SET PG_HBA.CONF###
+host    efm_check_db    efm_check_user    <ip witness>/32   md5
+host    efm_check_db    efm_check_user    <ip master>/32    md5
+host    efm_check_db    efm_check_user    <ip slave>/32     md5
+
+###START EFM###
+1) On Witness Node
+systemctl start efm-3.5.service
+2) On Master Node
+systemctl start efm-3.5.service
+3) On Slave Node
+systemctl start efm-3.5.service
+
+###ADD DB-NODE TO CLUSTER###
+*run in Witness node
+/usr/edb/efm-3/bin/efm allow-node <cluster name> <ip node master/ip node slave>
+
+===================================================================================================
+#                              EFM VIRTUAL IP USING KEEPALIVED                                    #
+===================================================================================================
+
+###INSTALL KEEPALIVED###
+yum install -y keepalived
+
+###CONFIGURE KEEPALIVED###
+vi /etc/keepalived/keepalived.conf
+global_defs {
+   notification_email {
+      pieter.satumalay@i-3.co.id
+   }
+   notification_email_from lb2@mydomain.com
+   smtp_server localhost
+   smtp_connect_timeout 30
+}
+
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        <virtual ip>/24
+    }
+}
+
+###START KEEPALIVED###
